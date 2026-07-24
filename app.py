@@ -14,19 +14,64 @@ def get_model():
 
 model = get_model()
 
+
+# ---------- Preprocessing ----------
+def preprocess_image(image):
+    """
+    Convert canvas image to MNIST-like format:
+    - Grayscale
+    - Crop to digit
+    - Resize while preserving aspect ratio
+    - Center on 28x28 canvas
+    - Normalize
+    """
+
+    img = Image.fromarray(image.astype("uint8")).convert("L")
+
+    arr = np.array(img)
+
+    # Find bounding box of the digit
+    coords = np.argwhere(arr > 20)
+
+    if len(coords) == 0:
+        return None, None
+
+    y0, x0 = coords.min(axis=0)
+    y1, x1 = coords.max(axis=0) + 1
+
+    img = img.crop((x0, y0, x1, y1))
+
+    # Resize while keeping aspect ratio
+    img.thumbnail((20, 20), Image.Resampling.LANCZOS)
+
+    # Create 28x28 black image
+    background = Image.new("L", (28, 28), 0)
+
+    # Center the digit
+    x = (28 - img.width) // 2
+    y = (28 - img.height) // 2
+
+    background.paste(img, (x, y))
+
+    arr = np.array(background).astype("float32") / 255.0
+    arr = arr.reshape(1, 28, 28, 1)
+
+    return arr, background
+
+
 st.title("✏️ Handwritten Digit Recognizer")
+
 st.write(
-    "Draw a single digit (0-9) in the box below, then click **Predict**. "
-    "The model is a CNN trained on MNIST (~99% test accuracy)."
+    "Draw a digit (0–9) and click **Predict**."
 )
 
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("Draw here")
+
     canvas_result = st_canvas(
         fill_color="black",
-        stroke_width=18,
+        stroke_width=12,
         stroke_color="white",
         background_color="black",
         height=280,
@@ -36,49 +81,44 @@ with col1:
     )
 
 with col2:
-    st.subheader("Prediction")
-    predict_clicked = st.button("Predict", use_container_width=True)
-    clear_note = st.caption("Use the canvas trash icon (top right of canvas) to clear and redraw.")
 
-    result_placeholder = st.empty()
-    chart_placeholder = st.empty()
+    if st.button("Predict", use_container_width=True):
 
-    if predict_clicked:
         if canvas_result.image_data is None:
-            st.warning("Please draw a digit first.")
+
+            st.warning("Please draw a digit.")
+
         else:
-            # Canvas gives RGBA image; convert to grayscale
-            img = canvas_result.image_data.astype("uint8")
-            pil_img = Image.fromarray(img).convert("L")
 
-            # Check if canvas is essentially blank
-            if np.array(pil_img).max() < 10:
-                st.warning("Please draw a digit first.")
+            processed, preview = preprocess_image(canvas_result.image_data)
+
+            if processed is None:
+
+                st.warning("Please draw a digit.")
+
             else:
-                # Resize to 28x28 like MNIST, preserving aspect via simple resize
-                pil_img_small = pil_img.resize((28, 28), Image.LANCZOS)
 
-                arr = np.array(pil_img_small).astype("float32") / 255.0
-                arr = arr.reshape(1, 28, 28, 1)
+                preds = model.predict(processed, verbose=0)[0]
 
-                preds = model.predict(arr, verbose=0)[0]
-                pred_digit = int(np.argmax(preds))
-                confidence = float(np.max(preds)) * 100
+                digit = np.argmax(preds)
 
-                result_placeholder.markdown(
-                    f"## Predicted digit: **{pred_digit}**\n"
-                    f"Confidence: **{confidence:.1f}%**"
+                confidence = np.max(preds) * 100
+
+                st.success(f"Prediction: **{digit}**")
+
+                st.write(f"Confidence: **{confidence:.2f}%**")
+
+                st.bar_chart(preds)
+
+                st.subheader("Image sent to CNN")
+
+                st.image(
+                    preview.resize((280, 280)),
+                    clamp=True
                 )
 
-                chart_placeholder.bar_chart(
-                    {"probability": preds},
-                )
+st.markdown("---")
 
-                with st.expander("See the 28x28 image fed to the model"):
-                    st.image(pil_img_small.resize((140, 140)), clamp=True)
-
-st.divider()
 st.caption(
-    "Model architecture: Conv2D(32) → MaxPool → Conv2D(64) → MaxPool → Flatten → "
-    "Dense(128, relu) → Dropout(0.5) → Dense(10, softmax). Trained for 5 epochs on MNIST."
+    "CNN trained on MNIST (Conv2D → MaxPool → Conv2D → MaxPool → Dense → Dropout → Softmax)"
 )
